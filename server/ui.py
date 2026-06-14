@@ -261,16 +261,108 @@ def create_ui():
     """Create the PatchGuard AI dashboard UI."""
     
     custom_css = """
-    .gradio-container { max-width: 1400px !important; }
-    .risk-critical { color: #dc2626; font-weight: 700; }
-    .risk-high { color: #ea580c; font-weight: 700; }
-    .risk-medium { color: #ca8a04; font-weight: 700; }
-    .risk-low { color: #16a34a; font-weight: 700; }
-    .stat-card { 
-        background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
-        border-radius: 12px; padding: 16px; text-align: center;
+    .gradio-container { 
+        max-width: 1400px !important; 
+        background-color: #0b0b14 !important;
     }
-    .pipeline-status { font-family: 'JetBrains Mono', monospace; }
+    .risk-critical { color: #f43f5e !important; font-weight: 700; }
+    .risk-high { color: #f97316 !important; font-weight: 700; }
+    .risk-medium { color: #eab308 !important; font-weight: 700; }
+    .risk-low { color: #10b981 !important; font-weight: 700; }
+    
+    /* Stats cards styling */
+    .stat-box {
+        background: rgba(26, 26, 46, 0.45) !important;
+        border: 1px solid rgba(255, 255, 255, 0.05) !important;
+        border-radius: 12px !important;
+        padding: 18px 12px !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+        backdrop-filter: blur(12px) !important;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    .stat-box:hover {
+        border-color: rgba(99, 102, 241, 0.35) !important;
+        box-shadow: 0 4px 25px rgba(99, 102, 241, 0.15) !important;
+        transform: translateY(-2px);
+    }
+    
+    /* Monospace Status Terminal Box */
+    .status-terminal textarea {
+        font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+        background-color: #09090f !important;
+        border: 1px solid #27273a !important;
+        color: #a5b4fc !important;
+        border-radius: 8px !important;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8) !important;
+        padding: 10px 14px !important;
+    }
+    
+    /* Shimmer animation for pending/loading states */
+    .pending, .loading, .generating {
+        position: relative !important;
+        overflow: hidden !important;
+        opacity: 0.9 !important;
+    }
+    .pending::after, .loading::after, .generating::after {
+        content: "" !important;
+        position: absolute !important;
+        top: 0 !important; left: -100% !important;
+        width: 200% !important; height: 100% !important;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent) !important;
+        animation: pg-shimmer 1.8s infinite linear !important;
+    }
+    @keyframes pg-shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    
+    /* Premium glowing custom ETA/progress bar */
+    .eta-bar, .progress-bar, .eta-bar-loading {
+        background: linear-gradient(90deg, #6366f1, #a78bfa, #f43f5e) !important;
+        height: 6px !important;
+        box-shadow: 0 0 14px rgba(99, 102, 241, 0.85) !important;
+        animation: progress-pulse 2s infinite alternate !important;
+        border-radius: 3px !important;
+    }
+    @keyframes progress-pulse {
+        0% { opacity: 0.65; }
+        100% { opacity: 1; filter: brightness(1.3); }
+    }
+    
+    /* Pulsating scanner indicator */
+    .processing-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #6366f1;
+        box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.8);
+        animation: pulse-ring 1.8s infinite cubic-bezier(0.66, 0, 0, 1);
+        vertical-align: middle;
+        margin-right: 10px;
+    }
+    @keyframes pulse-ring {
+        0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.8); }
+        70% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+    
+    /* Premium Primary CTA buttons */
+    .primary-btn {
+        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+        border: none !important;
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3) !important;
+        transition: all 0.25s ease !important;
+    }
+    .primary-btn:hover {
+        background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%) !important;
+        box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5) !important;
+        transform: translateY(-1px) !important;
+    }
     """
     
     theme = gr.themes.Base(
@@ -322,10 +414,30 @@ def create_ui():
         
         # ── Stats Bar ──────────────────────────────────────────────
         with gr.Row():
-            gr.Markdown("""<div style="text-align:center"><strong style="color:#6366f1">8</strong><br/><span style="color:#94a3b8;font-size:0.85em">Autonomous Agents</span></div>""")
-            gr.Markdown(f"""<div style="text-align:center"><strong style="color:{provider_color}">{provider_label}</strong><br/><span style="color:#94a3b8;font-size:0.85em">Active LLM Provider</span></div>""")
-            gr.Markdown("""<div style="text-align:center"><strong style="color:#c084fc">6</strong><br/><span style="color:#94a3b8;font-size:0.85em">Validation Stages</span></div>""")
-            gr.Markdown("""<div style="text-align:center"><strong style="color:#e879f9">4</strong><br/><span style="color:#94a3b8;font-size:0.85em">Review Dimensions</span></div>""")
+            gr.HTML("""
+            <div class="stat-box" style="flex: 1; margin: 0 8px;">
+                <span style="font-size: 1.6em; font-weight: 800; color: #6366f1; line-height: 1.2;">8</span>
+                <span style="color: #94a3b8; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">Autonomous Agents</span>
+            </div>
+            """)
+            gr.HTML(f"""
+            <div class="stat-box" style="flex: 1; margin: 0 8px;">
+                <span style="font-size: 1.6em; font-weight: 800; color: {provider_color}; line-height: 1.2;">{provider_label}</span>
+                <span style="color: #94a3b8; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">Active LLM Provider</span>
+            </div>
+            """)
+            gr.HTML("""
+            <div class="stat-box" style="flex: 1; margin: 0 8px;">
+                <span style="font-size: 1.6em; font-weight: 800; color: #c084fc; line-height: 1.2;">6</span>
+                <span style="color: #94a3b8; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">Validation Stages</span>
+            </div>
+            """)
+            gr.HTML("""
+            <div class="stat-box" style="flex: 1; margin: 0 8px;">
+                <span style="font-size: 1.6em; font-weight: 800; color: #e879f9; line-height: 1.2;">4</span>
+                <span style="color: #94a3b8; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">Review Dimensions</span>
+            </div>
+            """)
             
         # ── GitHub Connection Panel ──────────────────────────────────
         with gr.Group():
@@ -336,12 +448,13 @@ def create_ui():
                     label="Repository GitHub URL",
                     scale=4
                 )
-                run_btn_top = gr.Button("▶ Run PatchGuard", variant="primary", scale=1, size="lg")
+                run_btn_top = gr.Button("▶ Run PatchGuard", variant="primary", scale=1, size="lg", elem_classes=["primary-btn"])
                 
             conn_status = gr.Textbox(
                 value="⚪ Ready. Defaulting to local tasks.json Demo Mode if URL is empty.",
                 label="Connection Status",
-                interactive=False
+                interactive=False,
+                elem_classes=["status-terminal"]
             )
             
         # ── Repository Metadata & Scanner Results ──────────────────────
@@ -368,7 +481,7 @@ def create_ui():
                             value="7",
                         )
                     with gr.Column(scale=1):
-                        run_btn = gr.Button("▶ Run Pipeline", variant="primary", size="lg")
+                        run_btn = gr.Button("▶ Run Pipeline", variant="primary", size="lg", elem_classes=["primary-btn"])
                 
                 with gr.Row():
                     with gr.Column(scale=3):
@@ -381,7 +494,22 @@ def create_ui():
                     
                     with gr.Column(scale=4):
                         gr.Markdown("#### 📊 Pipeline Status")
-                        pipeline_status = gr.Textbox(label="Status", interactive=False, lines=1, value="⏳ Waiting for pipeline run...")
+                        
+                        # Custom active pipeline running/orchestration indicator widget
+                        gr.HTML("""
+                        <div style="display: flex; align-items: center; padding: 10px 14px; background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.15); border-radius: 8px; margin-bottom: 10px;">
+                            <span class="processing-indicator"></span>
+                            <span style="font-size: 0.9em; font-weight: 600; color: #a5b4fc; font-family: 'Inter', sans-serif;">Active Agent Orchestration Pipeline</span>
+                        </div>
+                        """)
+                        
+                        pipeline_status = gr.Textbox(
+                            label="Status", 
+                            interactive=False, 
+                            lines=1, 
+                            value="⏳ Waiting for pipeline run...",
+                            elem_classes=["status-terminal"]
+                        )
                         
                         with gr.Row():
                             confidence_out = gr.Textbox(label="🎯 Confidence", interactive=False)
@@ -396,8 +524,8 @@ def create_ui():
                         # ── Pull Request Preview ──
                         gr.Markdown("#### 🚀 Pull Request Preview")
                         pr_preview_out = gr.Markdown("Run the pipeline first to draft a Pull Request.")
-                        create_pr_btn = gr.Button("Create Pull Request on GitHub", variant="primary")
-                        pr_status_out = gr.Textbox(label="GitHub PR Creation Log", interactive=False)
+                        create_pr_btn = gr.Button("Create Pull Request on GitHub", variant="primary", elem_classes=["primary-btn"])
+                        pr_status_out = gr.Textbox(label="GitHub PR Creation Log", interactive=False, elem_classes=["status-terminal"])
             
             # ─── Tab 2: Validation Report ──────────────────────────
             with gr.Tab("📑 Validation Report"):
