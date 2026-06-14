@@ -57,7 +57,7 @@ def parse_inference_output(output: str):
     return metrics
 
 def run_benchmark(model_name: str):
-    print(f"🚀 Running inference for model: {model_name}...")
+    print(f"MergeGuard — Baseline Inference for model: {model_name}...")
     
     env = os.environ.copy()
     env["MODEL_NAME"] = model_name
@@ -89,7 +89,7 @@ def run_benchmark(model_name: str):
 
 def print_leaderboard(results):
     print("\n" + "=" * 50)
-    print("🏆 PULLREQUEST ARENA LEADERBOARD")
+    print("🏆 MERGEGUARD LEADERBOARD")
     print("=" * 50)
     print(f"{'Model':<25} | {'Avg Score':<10} | {'Completion':<10}")
     print("-" * 50)
@@ -101,7 +101,7 @@ def print_leaderboard(results):
     print("=" * 50 + "\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="PullRequest-Arena Benchmark Utility")
+    parser = argparse.ArgumentParser(description="MergeGuard Benchmark Utility")
     parser.add_argument("--model", type=str, required=True, help="HuggingFace / OpenAI Model Identifier")
     args = parser.parse_args()
 

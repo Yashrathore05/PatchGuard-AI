@@ -1,7 +1,7 @@
 spec_version: 1
-name: pullrequest_arena
-version: 1.0.0
-description: "OpenEnv environment for AI code review. Agent reviews GitHub PRs, identifies bugs across deceptive descriptions and CI logs, earns rewards for review quality. 9 tasks: easy/medium/hard."
+name: mergeguard
+version: 2.0.0
+description: "MergeGuard — Autonomous Software Change Validation Platform. Multi-agent system that plans, generates, tests, reviews, validates, and recommends software changes before pull request creation."
 type: space
 runtime: fastapi
 app: server.app:app
@@ -9,9 +9,11 @@ port: 7860
 tags:
   - openenv
   - code-review
+  - autonomous-validation
+  - multi-agent
+  - software-engineering
   - pull-request
   - developer-tools
-  - real-world
 tasks:
   - id: "1"
     description: "Easy: assignment vs comparison bug"

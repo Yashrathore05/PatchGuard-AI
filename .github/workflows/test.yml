@@ -1,4 +1,4 @@
-name: PullRequest Arena CI
+name: MergeGuard CI
 
 on:
   push:

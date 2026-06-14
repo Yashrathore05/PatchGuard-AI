@@ -306,7 +306,7 @@ def run_inference() -> None:
     task_ids = [str(i) for i in range(1, 20)]
     total_tasks = len(task_ids)
 
-    print(f"PullRequest Arena — Baseline Inference")
+    print(f"MergeGuard — Baseline Inference")
     print(f"Model: {model_name}")
     print(f"API:   {api_base_url}")
     print(f"Tasks: {total_tasks}")

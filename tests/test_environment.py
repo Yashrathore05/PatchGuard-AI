@@ -42,3 +42,38 @@ def test_all_9_tasks_load():
         assert obs.pr_title != ""
         assert obs.code_diff != ""
         assert str(obs.task_id) == str(task_id)
+
+def test_mergeguard_pipeline():
+    from mergeguard.pipeline import MergeGuardPipeline
+    from mergeguard.agents import PlannerAgent, SolverAgent, TestGenAgent, ReviewAgent, RiskScorer
+    
+    # Init pipeline
+    pipeline = MergeGuardPipeline(num_solvers=3)
+    
+    # Test on Task 7
+    env = PullRequestEnvironment()
+    obs = env.reset("7")
+    task = env.current_task
+    
+    result = pipeline.run(task)
+    assert result.issue_id == "7"
+    assert result.plan is not None
+    assert len(result.solutions) == 3
+    assert len(result.test_cases) > 0
+    assert len(result.test_results) > 0
+    assert len(result.reviews) == 3
+    assert result.risk is not None
+    assert result.risk.risk_level in ["low", "medium", "high", "critical"]
+    assert result.recommended_solution_id != ""
+    assert len(result.timeline) > 0
+    
+    # Verify report markdown generation
+    from mergeguard.report import ReportGenerator
+    report = ReportGenerator.generate_markdown(result)
+    assert "# MergeGuard Validation Report" in report
+    assert "Risk Assessment" in report
+    assert "Implementation Plan" in report
+    assert "Candidate Solutions" in report
+    assert "Test Results" in report
+    assert "Execution Timeline" in report
+
