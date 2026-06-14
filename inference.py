@@ -20,7 +20,7 @@ import os
 import sys
 import time
 
-from openai import OpenAI
+from patchguard.providers import get_provider
 
 from models import ReviewAction
 
@@ -206,12 +206,12 @@ def parse_llm_response(response_text: str) -> dict:
     return {"type": detected_type, "comment": text}
 
 
-def call_llm(client: OpenAI, model: str, observation: dict) -> dict:
+def call_llm(client, model: str, observation: dict) -> dict:
     """
     Call the LLM to review a pull request.
 
     Args:
-        client: OpenAI client instance.
+        client: Provider instance.
         model: Model identifier.
         observation: PR observation dict.
 
@@ -219,18 +219,8 @@ def call_llm(client: OpenAI, model: str, observation: dict) -> dict:
         Parsed action dict with "type" and "comment".
     """
     prompt = build_review_prompt(observation)
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.0,  # Deterministic for reproducibility
-        max_tokens=512,
-    )
-
-    response_text = response.choices[0].message.content or ""
+    provider = get_provider()
+    response_text = provider.call_text(system_prompt=SYSTEM_PROMPT, user_prompt=prompt) or ""
     return parse_llm_response(response_text)
 
 
@@ -292,14 +282,10 @@ def run_inference() -> None:
     """
     # --- Read configuration ---
     api_base_url = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-    model_name = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
-    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY", "dummy_token_for_validation")
-
-    # --- Initialize OpenAI client ---
-    client = OpenAI(
-        base_url=api_base_url,
-        api_key=hf_token
-    )
+    # --- Initialize Model Provider ---
+    client = get_provider()
+    model_name = client.display_name
+    api_base_url = "ModelProvider Internal"
 
     # --- Initialize environment ---
     env = UnifiedEnv()

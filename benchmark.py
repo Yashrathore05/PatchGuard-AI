@@ -105,9 +105,9 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="HuggingFace / OpenAI Model Identifier")
     args = parser.parse_args()
 
-    # Verify OpenEnv token presence natively avoiding crashes
-    if "HF_TOKEN" not in os.environ and "OPENAI_API_KEY" not in os.environ:
-        print("[WARNING] HF_TOKEN or OPENAI_API_KEY environment variable is not set. Inference may fail if the API requires auth.")
+    # Verify provider token presence natively avoiding crashes
+    if "GOOGLE_API_KEY" not in os.environ and "OPENROUTER_API_KEY" not in os.environ:
+        print("[WARNING] GOOGLE_API_KEY or OPENROUTER_API_KEY environment variable is not set. Inference may fail if the API requires auth.")
 
     if not os.path.exists(RESULTS_DIR):
         os.makedirs(RESULTS_DIR)

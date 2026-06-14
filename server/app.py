@@ -17,13 +17,13 @@ env_app = create_app(
     PullRequestEnvironment,
     ReviewAction,
     PRObservation,
-    env_name="mergeguard"
+    env_name="patchguard"
 )
 
 # Add /health endpoint so Docker HEALTHCHECK passes
 @env_app.get("/health")
 async def health():
-    return JSONResponse({"status": "ok", "env": "mergeguard"})
+    return JSONResponse({"status": "ok", "env": "patchguard"})
 
 # Render production UI overlay
 ui = create_ui()

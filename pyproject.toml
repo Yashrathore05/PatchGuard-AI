@@ -1,14 +1,13 @@
 [project]
-name = "mergeguard"
-version = "2.0.0"
-description = "MergeGuard — Autonomous Software Change Validation Platform"
+name = "patchguard"
+version = "3.0.0"
+description = "PatchGuard AI — Autonomous Software Change Validation Platform"
 requires-python = ">=3.11"
 dependencies = [
     "openenv-core>=0.1.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
     "pydantic>=2.0.0",
-    "openai>=1.0.0",
     "gradio>=4.0.0",
 ]
 
@@ -17,7 +16,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["server", "mergeguard", "client.py", "models.py", "__init__.py"]
+packages = ["server", "mergeguard", "patchguard", "client.py", "models.py", "__init__.py"]
 
 [project.scripts]
 server = "server.app:main"

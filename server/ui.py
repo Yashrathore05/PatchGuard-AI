@@ -1,8 +1,8 @@
 """
-server/ui.py — MergeGuard Dashboard UI
+server/ui.py — PatchGuard AI Dashboard UI
 
 Professional SaaS-style dashboard built with Gradio.
-Tabs: Pipeline, Validation Report, Agent Timeline, Architecture, Leaderboard
+Tabs: Pipeline, Validation Report, Agent Timeline, Architecture, Leaderboard, Playground
 """
 
 import gradio as gr
@@ -17,12 +17,13 @@ except ImportError:
     from models import ReviewAction
     from server.pullrequest_environment import PullRequestEnvironment
 
-from mergeguard.pipeline import MergeGuardPipeline
-from mergeguard.report import ReportGenerator
-
+from patchguard.github_client import GitHubClient
+from patchguard.pipeline import PatchGuardPipeline
+from patchguard.report import ReportGenerator
+from patchguard.providers import get_provider
 
 # ---------------------------------------------------------------------------
-# Issue choices (reframed from tasks)
+# Default Issue choices (fallback when not connected to GitHub)
 # ---------------------------------------------------------------------------
 
 ISSUE_CHOICES = [
@@ -46,6 +47,18 @@ ISSUE_CHOICES = [
     ("🔴 Issue #18 — Misleading Comment Trap (Adversarial)", "18"),
     ("🟡 Issue #19 — Off-by-One Loop (Medium)", "19"),
 ]
+
+# Load tasks.json for local/demo mode
+_tasks = []
+try:
+    base = os.path.dirname(os.path.dirname(__file__))
+    tp = os.path.join(base, "tasks.json")
+    if not os.path.exists(tp):
+        tp = "tasks.json"
+    with open(tp) as f:
+        _tasks = json.load(f)
+except Exception:
+    pass
 
 
 def load_leaderboard():
@@ -72,27 +85,172 @@ def load_leaderboard():
 
 
 # ---------------------------------------------------------------------------
-# Pipeline state
+# Handlers for GitHub Connectivity
 # ---------------------------------------------------------------------------
 
-_pipeline = MergeGuardPipeline(num_solvers=3)
+def run_full_flow(repo_url, issue_id, client, issues):
+    """
+    Connects/clones the repository (if URL changed/provided), 
+    determines the issue to run on (the selected one, or the latest open issue from the repo, or demo fallback),
+    runs the scanner, and executes the full PatchGuard validation pipeline.
+    """
+    status_msg = ""
+    # 1. Initialize Client & Connect/Clone if URL is provided
+    if repo_url:
+        # Check if we are already connected to this URL
+        if not client or client.repo_url != repo_url:
+            token = os.environ.get("GITHUB_TOKEN")
+            client = GitHubClient(token=token)
+            meta = client.connect(repo_url)
+            if not meta.connected:
+                status_msg = f"🔴 Connection failed: {meta.error}"
+                # Fall back to demo mode
+                client = GitHubClient()
+            else:
+                try:
+                    client.clone_repo()
+                    status_msg = f"🟢 Connected and cloned {client.mode_label}"
+                except Exception as e:
+                    status_msg = f"🔴 Clone failed: {e}. Running in demo mode."
+                    client = GitHubClient()
+        else:
+            status_msg = f"🟢 Using cached clone for {client.repo_url}"
+    else:
+        # No URL provided, use demo mode
+        client = GitHubClient()
+        status_msg = "⚪ Running in local tasks.json Demo Mode"
 
-# Load tasks
-_tasks = []
-try:
-    base = os.path.dirname(os.path.dirname(__file__))
-    tp = os.path.join(base, "tasks.json")
-    if not os.path.exists(tp):
-        tp = "tasks.json"
-    with open(tp) as f:
-        _tasks = json.load(f)
-except Exception:
-    pass
+    # 2. Fetch issues and choose target
+    if not client.is_demo:
+        try:
+            issues_list = client.fetch_issues()
+        except Exception:
+            issues_list = []
+        
+        choices = [(f"Issue #{i.number} — {i.title}", str(i.number)) for i in issues_list]
+        if not choices:
+            choices = ISSUE_CHOICES
+        
+        # Determine target issue
+        issue = None
+        if issue_id:
+            # Try to find the selected issue
+            issue = next((iss for iss in issues_list if str(iss.number) == str(issue_id)), None)
+        if not issue and issues_list:
+            # Fall back to first/latest issue
+            issue = issues_list[0]
+            
+        if issue:
+            task = client.get_task_for_issue(issue)
+            target_issue_id = str(issue.number)
+        else:
+            task = next((t for t in _tasks if str(t["id"]) == "7"), None)
+            target_issue_id = "7"
+    else:
+        choices = ISSUE_CHOICES
+        issues_list = []
+        target_issue_id = issue_id if issue_id in [c[1] for c in choices] else "7"
+        task = next((t for t in _tasks if str(t["id"]) == target_issue_id), None)
 
+    if not task:
+        task = _tasks[0] if _tasks else {}
+        target_issue_id = str(task.get("id", "7"))
 
-def _get_task(issue_id: str) -> dict:
-    """Get task by ID."""
-    return next((t for t in _tasks if str(t["id"]) == str(issue_id)), None)
+    # Update repo meta text
+    if not client.is_demo and client.metadata:
+        meta = client.metadata
+        repo_meta_text = (
+            f"**Repo:** {meta.full_name}\n"
+            f"- **Description:** {meta.description or 'No description'}\n"
+            f"- **Language:** {meta.language}\n"
+            f"- **Stars:** {meta.stars} | **Forks:** {meta.forks}\n"
+            f"- **Default Branch:** {meta.default_branch}"
+        )
+    else:
+        repo_meta_text = (
+            f"**Repo:** local/demo-repo\n"
+            f"- **Description:** Local Demo Repository\n"
+            f"- **Language:** Python\n"
+            f"- **Default Branch:** main"
+        )
+
+    # 3. Context setup & Pipeline Execution
+    context = {
+        "repo_url": client.repo_url or "https://github.com/demo-user/demo-repo",
+        "clone_dir": client.clone_dir,
+        "is_demo": client.is_demo,
+        "github_token": client.token
+    }
+    
+    pipeline = PatchGuardPipeline(num_solvers=3)
+    result = pipeline.run(task, context)
+    report_md = ReportGenerator.generate_markdown(result)
+    
+    # Format timeline
+    tl_lines = ["| Time | Agent | Action | Status | Duration |",
+                "|------|-------|--------|--------|----------|"]
+    for ev in result.timeline:
+        icon = {"completed": "✅", "running": "⏳", "failed": "❌"}.get(ev.status, "⚪")
+        tl_lines.append(f"| {ev.timestamp} | {ev.agent} | {ev.action} | {icon} | {ev.duration_ms}ms |")
+    timeline_md = "\n".join(tl_lines)
+    
+    # Scanner formatting
+    so = result.scanner_output
+    scanner_text = (
+        f"- **Language:** {so.get('language')}\n"
+        f"- **Framework:** {so.get('framework')}\n"
+        f"- **Package Manager:** {so.get('package_manager')}\n"
+        f"- **Test Framework:** {so.get('test_framework')}\n\n"
+        f"**Structure Details:**\n"
+        f"- Total Files: {so.get('project_structure', {}).get('total_files', 0)}\n"
+        f"- Top Directories: {', '.join(so.get('project_structure', {}).get('directories', []))}\n"
+        f"- Config Files: {', '.join(so.get('project_structure', {}).get('config_files', []))}"
+    )
+    
+    best = next((s for s in result.solutions if s.solution_id == result.recommended_solution_id), None)
+    risk = result.risk
+    badge = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(risk.risk_level, "⚪")
+    
+    # PR Preview text
+    pr_preview_text = (
+        f"### 📑 Pull Request Draft\n"
+        f"**Title:** PatchGuard AI: {task.get('pr_title', 'Fix issue')}\n\n"
+        f"**Description:**\n"
+        f"{task.get('pr_description', '')}\n\n"
+        f"**Validation Summary:**\n"
+        f"- Confidence Score: {risk.confidence_score:.0%}\n"
+        f"- Risk Score: {risk.risk_score:.0%}\n"
+        f"- Risk Level: {risk.risk_level.upper()}\n"
+        f"- Recommendation: {risk.recommendation}\n"
+    )
+    
+    p = get_provider()
+    pipeline_status_msg = f"✅ Pipeline complete — {result.total_duration_ms}ms | {len(result.solutions)} solutions | {sum(1 for t in result.test_results if t.passed)}/{len(result.test_results)} tests passed | ⚡ {p.display_name}"
+
+    return (
+        status_msg,
+        gr.update(choices=choices, value=target_issue_id),
+        client,
+        issues_list,
+        repo_meta_text,
+        scanner_text,
+        task.get("pr_title", ""),
+        task.get("pr_description", ""),
+        task.get("repository_context", ""),
+        task.get("code_diff", ""),
+        pipeline_status_msg,
+        f"{risk.confidence_score:.0%}",
+        f"{badge} {risk.risk_level.upper()} ({risk.risk_score:.0%})",
+        risk.recommendation,
+        best.patch if best else "No solution generated",
+        best.approach_description if best else "",
+        report_md,
+        timeline_md,
+        pr_preview_text,
+        task.get("pr_title", "Fix issue"),
+        result
+    )
+
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +258,7 @@ def _get_task(issue_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def create_ui():
-    """Create the MergeGuard dashboard UI."""
+    """Create the PatchGuard AI dashboard UI."""
     
     custom_css = """
     .gradio-container { max-width: 1400px !important; }
@@ -136,35 +294,71 @@ def create_ui():
         border_color_primary="#2d2d44",
     )
 
-    with gr.Blocks(theme=theme, css=custom_css, title="MergeGuard — Autonomous Software Change Validation") as app:
+    with gr.Blocks(theme=theme, css=custom_css, title="PatchGuard AI — Autonomous Software Change Validation") as app:
         
-        # State
+        # State variables
+        client_state = gr.State(GitHubClient())
+        issues_state = gr.State([])
         pipeline_result_state = gr.State(None)
+        pr_title_state = gr.State("")
         
         # ── Hero ────────────────────────────────────────────────────
-        gr.Markdown("""
+        provider = get_provider()
+        provider_label = provider.display_name
+        provider_color = {"gemini": "#4285f4", "openrouter": "#f97316", "ollama": "#22c55e"}.get(provider.active_provider, "#94a3b8")
+        
+        gr.Markdown(f"""
 <div style="text-align: center; padding: 24px 0 8px 0;">
 <h1 style="font-size: 2.2em; font-weight: 800; margin: 0; background: linear-gradient(135deg, #6366f1, #a78bfa, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-🛡️ MergeGuard
+🛡️ PatchGuard AI
 </h1>
 <p style="color: #94a3b8; font-size: 1.1em; margin: 4px 0 0 0;">Autonomous Software Change Validation Platform</p>
-<p style="color: #64748b; font-size: 0.85em;">Multi-agent system that plans, generates, tests, reviews, and validates software changes before pull request creation.</p>
+<p style="color: #64748b; font-size: 0.85em;">Analyze repositories, generate fixes, validate changes, review risk, and create pull requests — autonomously.</p>
+<div style="display: inline-block; margin-top: 8px; padding: 4px 12px; border-radius: 999px; background: {provider_color}22; border: 1px solid {provider_color}44;">
+  <span style="color: {provider_color}; font-size: 0.8em; font-weight: 600;">⚡ Active Provider: {provider_label}</span>
+</div>
 </div>
         """)
         
         # ── Stats Bar ──────────────────────────────────────────────
         with gr.Row():
-            gr.Markdown("""<div style="text-align:center"><strong style="color:#6366f1">6</strong><br/><span style="color:#94a3b8;font-size:0.85em">AI Agents</span></div>""")
-            gr.Markdown("""<div style="text-align:center"><strong style="color:#a78bfa">19</strong><br/><span style="color:#94a3b8;font-size:0.85em">Issues</span></div>""")
-            gr.Markdown("""<div style="text-align:center"><strong style="color:#c084fc">5</strong><br/><span style="color:#94a3b8;font-size:0.85em">Validation Layers</span></div>""")
+            gr.Markdown("""<div style="text-align:center"><strong style="color:#6366f1">8</strong><br/><span style="color:#94a3b8;font-size:0.85em">Autonomous Agents</span></div>""")
+            gr.Markdown(f"""<div style="text-align:center"><strong style="color:{provider_color}">{provider_label}</strong><br/><span style="color:#94a3b8;font-size:0.85em">Active LLM Provider</span></div>""")
+            gr.Markdown("""<div style="text-align:center"><strong style="color:#c084fc">6</strong><br/><span style="color:#94a3b8;font-size:0.85em">Validation Stages</span></div>""")
             gr.Markdown("""<div style="text-align:center"><strong style="color:#e879f9">4</strong><br/><span style="color:#94a3b8;font-size:0.85em">Review Dimensions</span></div>""")
-        
+            
+        # ── GitHub Connection Panel ──────────────────────────────────
+        with gr.Group():
+            gr.Markdown("### 🔗 Connect GitHub Repository & Validate")
+            with gr.Row():
+                repo_url_input = gr.Textbox(
+                    placeholder="https://github.com/owner/repo",
+                    label="Repository GitHub URL",
+                    scale=4
+                )
+                run_btn_top = gr.Button("▶ Run PatchGuard", variant="primary", scale=1, size="lg")
+                
+            conn_status = gr.Textbox(
+                value="⚪ Ready. Defaulting to local tasks.json Demo Mode if URL is empty.",
+                label="Connection Status",
+                interactive=False
+            )
+            
+        # ── Repository Metadata & Scanner Results ──────────────────────
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("#### 📋 Repository Details")
+                repo_meta_out = gr.Markdown("No active repository.")
+            with gr.Column(scale=2):
+                gr.Markdown("#### 🔍 Repository Scanner Results")
+                scanner_out = gr.Markdown("Scanner not executed.")
+                
         # ── Tabs ───────────────────────────────────────────────────
         with gr.Tabs():
             
             # ─── Tab 1: Pipeline Execution ─────────────────────────
             with gr.Tab("🚀 Pipeline"):
-                gr.Markdown("### Run the Autonomous Validation Pipeline\nSelect an issue, then run the full multi-agent pipeline: **Plan → Solve → Test → Review → Score**")
+                gr.Markdown("### Run the Autonomous Validation Pipeline\nSelect an issue/change request, then execute: **Scan → Plan → Solve → Test → Validate → Review → Score**")
                 
                 with gr.Row():
                     with gr.Column(scale=4):
@@ -198,6 +392,12 @@ def create_ui():
                         gr.Markdown("#### 🔧 Recommended Solution")
                         solution_patch = gr.Code(language="python", interactive=False, label="Recommended Patch")
                         solution_approach = gr.Textbox(label="Approach", interactive=False, lines=2)
+                        
+                        # ── Pull Request Preview ──
+                        gr.Markdown("#### 🚀 Pull Request Preview")
+                        pr_preview_out = gr.Markdown("Run the pipeline first to draft a Pull Request.")
+                        create_pr_btn = gr.Button("Create Pull Request on GitHub", variant="primary")
+                        pr_status_out = gr.Textbox(label="GitHub PR Creation Log", interactive=False)
             
             # ─── Tab 2: Validation Report ──────────────────────────
             with gr.Tab("📑 Validation Report"):
@@ -212,42 +412,44 @@ def create_ui():
             # ─── Tab 4: Architecture ───────────────────────────────
             with gr.Tab("🏗️ Architecture"):
                 gr.Markdown("""
-### MergeGuard Architecture
+### PatchGuard AI Multi-Agent Architecture
 
-The platform uses a **multi-agent pipeline** where each agent is a specialized component:
+The platform uses a **multi-agent validation pipeline** where each agent acts as a specialized component:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        MergeGuard Pipeline                         │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐              │
-│  │  Issue /  │    │   Planner    │    │   Solver     │              │
-│  │  Change   │───▶│   Agent      │───▶│   Agents     │              │
-│  │  Request  │    │              │    │  (x3)        │              │
-│  └──────────┘    └──────────────┘    └──────┬───────┘              │
-│                                              │                      │
-│                                              ▼                      │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │                    Test Generation Agent                  │      │
-│  │  • Auto-generate test cases                              │      │
-│  │  • Run tests against each candidate                      │      │
-│  └──────────────────────────────┬───────────────────────────┘      │
-│                                  │                                  │
-│                                  ▼                                  │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │                      Review Agent                         │      │
-│  │  Security │ Performance │ Maintainability │ Correctness   │      │
-│  └──────────────────────────────┬───────────────────────────┘      │
-│                                  │                                  │
-│                                  ▼                                  │
-│  ┌──────────────┐    ┌──────────────────────────────────────┐      │
-│  │    Risk      │    │     Final Validation Report           │      │
-│  │    Scorer    │───▶│  • Recommended solution               │      │
-│  │              │    │  • Confidence & risk scores            │      │
-│  └──────────────┘    │  • Merge recommendation               │      │
-│                      └──────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│                               PatchGuard AI Pipeline                                 │
+├───────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                       │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐         │
+│  │    Issue     │───▶│  Repository  │───▶│   Planner    │───▶│    Solver    │         │
+│  │   Context    │    │   Scanner    │    │   Agent      │    │    Agents    │         │
+│  └──────────────┘    └──────────────┘    └──────────────┘    └──────┬───────┘         │
+│                                                                      │                │
+│                                                                      ▼                │
+│                                                      ┌──────────────────────────────┐ │
+│                                                      │    Test Generation Agent     │ │
+│                                                      │  • Auto-generate test cases  │ │
+│                                                      └──────────────┬───────────────┘ │
+│                                                                      │                │
+│                                                                      ▼                │
+│                                                      ┌──────────────────────────────┐ │
+│                                                      │       Validation Agent       │ │
+│                                                      │  • Run real pytest/npm tests │ │
+│                                                      └──────────────┬───────────────┘ │
+│                                                                      │                │
+│                                                                      ▼                │
+│                                                      ┌──────────────────────────────┐ │
+│                                                      │         Review Agent         │ │
+│                                                      │  Security/Perf/Correctness   │ │
+│                                                      └──────────────┬───────────────┘ │
+│                                                                      │                │
+│                                                                      ▼                │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────────────────────┐ │
+│  │ Create Pull  │◀───│   PR Draft   │◀───│               Risk Scorer                │ │
+│  │   Request    │    │   Preview    │    │          Confidence & Risk Score         │ │
+│  └──────────────┘    └──────────────┘    └──────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -256,11 +458,14 @@ The platform uses a **multi-agent pipeline** where each agent is a specialized c
 
 | Agent | Purpose | Output |
 |-------|---------|--------|
+| **RepositoryScannerAgent** | Analyzes the layout, language, framework, configs of the repo | Technical environment profile & structural context |
 | **PlannerAgent** | Analyzes the issue, identifies root cause, decomposes into tasks | Implementation plan with steps and strategy |
 | **SolverAgent** (x3) | Generates independent candidate solutions | Patches with confidence scores |
-| **TestGenAgent** | Creates test cases and validates each candidate | Test results per solution |
+| **TestGenAgent** | Creates test cases targeted to the patch | Dynamic test suite specs |
+| **ValidationAgent** | Executes real workspace testing (pytest, jest) or falls back to simulation | Detailed pass/fail test run outputs |
 | **ReviewAgent** | Multi-dimensional analysis across 4 categories | Security, performance, maintainability, correctness scores |
-| **RiskScorer** | Aggregates all signals into final assessment | Confidence score, risk level, merge recommendation |
+| **RiskScoringAgent** | Aggregates all signals into final assessment | Confidence score, risk level, merge recommendation |
+| **ReportAgent** | Formats validation timeline and details into Markdown | Final Report and JSON summary |
 
 ---
 
@@ -315,75 +520,130 @@ Run your own model: `HF_TOKEN=... python benchmark.py --model <model_id>`
                         pg_reward = gr.Textbox(label="Reward [0.01 – 0.99]", interactive=False)
                         pg_feedback = gr.Textbox(label="Feedback", interactive=False, lines=2)
         
-        # ── Handlers ───────────────────────────────────────────────
+        # ── Load Issue Trigger ─────────────────────────────────────
         
-        def load_issue(issue_id):
-            """Load issue context into the pipeline tab."""
-            task = _get_task(issue_id)
-            if not task:
-                return "Unknown", "", "", "", None
+        def load_selected_issue(issue_id, client, issues):
+            """Load issue context fields dynamically based on selection."""
+            issue = None
+            if issues:
+                for iss in issues:
+                    if str(iss.number) == str(issue_id):
+                        issue = iss
+                        break
+                        
+            if issue:
+                task = client.get_task_for_issue(issue)
+            else:
+                task = next((t for t in _tasks if str(t["id"]) == str(issue_id)), None)
+                if not task:
+                    return "Unknown", "", "", "", None, ""
+                    
             return (
                 task.get("pr_title", ""),
                 task.get("pr_description", ""),
                 task.get("repository_context", ""),
                 task.get("code_diff", ""),
-                None,  # reset pipeline result
+                None,  # Reset pipeline state
+                "",    # Reset PR status log
             )
-        
+            
         issue_dropdown.change(
-            load_issue,
-            inputs=[issue_dropdown],
-            outputs=[issue_title, issue_desc, issue_context, issue_diff, pipeline_result_state],
+            load_selected_issue,
+            inputs=[issue_dropdown, client_state, issues_state],
+            outputs=[issue_title, issue_desc, issue_context, issue_diff, pipeline_result_state, pr_status_out]
         )
+
+        # ── Pipeline Execution Trigger ──────────────────────────────
         
-        def run_pipeline(issue_id):
-            """Execute the full MergeGuard pipeline."""
-            task = _get_task(issue_id)
-            if not task:
-                return ("❌ Issue not found", "", "", "", "", "", 
-                        "*Issue not found*", "*Issue not found*", None)
-            
-            result = _pipeline.run(task)
-            report_md = ReportGenerator.generate_markdown(result)
-            
-            # Build timeline markdown
-            tl_lines = ["| Time | Agent | Action | Status | Duration |",
-                        "|------|-------|--------|--------|----------|"]
-            for ev in result.timeline:
-                icon = {"completed": "✅", "running": "⏳", "failed": "❌"}.get(ev.status, "⚪")
-                tl_lines.append(f"| {ev.timestamp} | {ev.agent} | {ev.action} | {icon} | {ev.duration_ms}ms |")
-            timeline_md = "\n".join(tl_lines)
-            
-            # Get recommended solution
-            best = next((s for s in result.solutions if s.solution_id == result.recommended_solution_id), None)
-            
-            risk = result.risk
-            badge = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(risk.risk_level, "⚪")
-            
-            return (
-                f"✅ Pipeline complete — {result.total_duration_ms}ms | {len(result.solutions)} solutions | {sum(1 for t in result.test_results if t.passed)}/{len(result.test_results)} tests passed",
-                f"{risk.confidence_score:.0%}",
-                f"{badge} {risk.risk_level.upper()} ({risk.risk_score:.0%})",
-                risk.recommendation,
-                best.patch if best else "No solution generated",
-                best.approach_description if best else "",
-                report_md,
-                timeline_md,
-                result,
-            )
+        run_outputs = [
+            conn_status,
+            issue_dropdown,
+            client_state,
+            issues_state,
+            repo_meta_out,
+            scanner_out,
+            issue_title,
+            issue_desc,
+            issue_context,
+            issue_diff,
+            pipeline_status,
+            confidence_out,
+            risk_out,
+            recommendation_out,
+            solution_patch,
+            solution_approach,
+            report_output,
+            timeline_output,
+            pr_preview_out,
+            pr_title_state,
+            pipeline_result_state
+        ]
+
+        run_btn_top.click(
+            run_full_flow,
+            inputs=[repo_url_input, issue_dropdown, client_state, issues_state],
+            outputs=run_outputs
+        )
         
         run_btn.click(
-            run_pipeline,
-            inputs=[issue_dropdown],
-            outputs=[
-                pipeline_status, confidence_out, risk_out, recommendation_out,
-                solution_patch, solution_approach,
-                report_output, timeline_output,
-                pipeline_result_state,
-            ],
+            run_full_flow,
+            inputs=[repo_url_input, issue_dropdown, client_state, issues_state],
+            outputs=run_outputs
         )
         
-        # Playground handlers (preserved from original)
+        # ── Pull Request Creation Handler ───────────────────────────
+        
+        def create_github_pull_request(client, pr_title, pr_patch, issue_id):
+            """Interact with the client to create a branch, commit code, and push PR."""
+            if not client:
+                return "🔴 GitHub client not initialized."
+                
+            if client.is_demo:
+                return (
+                    f"🟢 Simulated PR created successfully! (Demo Mode)\n"
+                    f"- Branch: patchguard-fix-{issue_id}\n"
+                    f"- PR URL: https://github.com/{client.owner}/{client.repo_name}/pull/42"
+                )
+                
+            try:
+                branch_name = f"patchguard-fix-{issue_id}-{int(time.time())}"
+                client.create_branch(branch_name)
+                
+                # Write patch file as summary log
+                fix_file = os.path.join(client.clone_dir, "patchguard_solution.py")
+                with open(fix_file, "w") as f:
+                    f.write(pr_patch)
+                    
+                client.commit_changes("Apply autonomous fix from PatchGuard AI")
+                client.push_branch(branch_name)
+                
+                pr_body = (
+                    f"This Pull Request contains autonomous change validation fixes generated by PatchGuard AI.\n\n"
+                    f"### Validation Summary\n"
+                    f"- Target Issue: #{issue_id}\n"
+                    f"- Applied patch details are committed to the codebase and documented in patchguard_solution.py"
+                )
+                
+                pr_result = client.create_pull_request(
+                    title=f"PatchGuard AI: {pr_title}",
+                    body=pr_body,
+                    branch=branch_name
+                )
+                
+                if pr_result.success:
+                    return f"🟢 Pull Request #{pr_result.pr_number} created successfully!\nURL: {pr_result.pr_url}"
+                else:
+                    return f"🔴 PR Creation failed: {pr_result.error}"
+            except Exception as e:
+                return f"🔴 Git/PR Error: {str(e)}"
+                
+        create_pr_btn.click(
+            create_github_pull_request,
+            inputs=[client_state, pr_title_state, solution_patch, issue_dropdown],
+            outputs=[pr_status_out]
+        )
+        
+        # ── Playground Handlers (preserved from original) ─────────────
         def load_task(task_id):
             env = PullRequestEnvironment()
             obs = env.reset(task_id)

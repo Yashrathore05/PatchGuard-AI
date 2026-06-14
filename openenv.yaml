@@ -1,7 +1,7 @@
 spec_version: 1
-name: mergeguard
+name: patchguard
 version: 2.0.0
-description: "MergeGuard — Autonomous Software Change Validation Platform. Multi-agent system that plans, generates, tests, reviews, validates, and recommends software changes before pull request creation."
+description: "PatchGuard AI — Autonomous Software Change Validation Platform. Multi-agent system that scans repositories, plans, generates, tests, reviews, validates, and recommends software changes before pull request creation."
 type: space
 runtime: fastapi
 app: server.app:app

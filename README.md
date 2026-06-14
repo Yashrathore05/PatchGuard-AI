@@ -1,5 +1,5 @@
 ---
-title: MergeGuard
+title: PatchGuard AI
 emoji: 🛡️
 colorFrom: indigo
 colorTo: purple
@@ -10,11 +10,11 @@ license: mit
 
 <div align="center">
 
-# 🛡️ MergeGuard
+# 🛡️ PatchGuard AI
 
 ### Autonomous Software Change Validation Platform
 
-**A multi-agent AI system that plans, generates, tests, reviews, validates, and recommends software changes — before a pull request is ever created.**
+**A multi-agent AI system that scans repositories, plans, generates, tests, reviews, validates, and recommends software changes — before a pull request is ever created.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-6366f1.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-a78bfa.svg)](https://opensource.org/licenses/MIT)
@@ -28,14 +28,15 @@ license: mit
 
 Current AI coding assistants generate code. They don't validate it.
 
-**MergeGuard** is an autonomous validation platform that sits between code generation and pull request creation. Instead of blindly pushing AI-generated changes, MergeGuard runs a structured multi-agent pipeline that:
+**PatchGuard AI** is an autonomous validation platform that sits between code generation and pull request creation. Instead of blindly pushing AI-generated changes, PatchGuard AI runs a structured multi-agent pipeline that:
 
-1. **Plans** — Decomposes the issue into actionable tasks
-2. **Solves** — Generates multiple independent candidate solutions
-3. **Tests** — Auto-generates test cases and validates each candidate
-4. **Reviews** — Analyzes security, performance, maintainability, and correctness
-5. **Scores** — Computes confidence and risk assessments
-6. **Reports** — Produces a comprehensive validation report with a merge recommendation
+1. **Scans** — Automatically profiles repository framework, language, package manager, and structure
+2. **Plans** — Decomposes the issue into actionable tasks
+3. **Solves** — Generates multiple independent candidate solutions
+4. **Tests** — Auto-generates test cases and executes actual test runners (pytest, npm test, etc.) in the workspace
+5. **Reviews** — Analyzes security, performance, maintainability, and correctness
+6. **Scores** — Computes confidence and risk assessments
+7. **Reports** — Produces a comprehensive validation report with a merge recommendation and direct GitHub Pull Request creation
 
 The result: **every proposed change comes with a validation report, not just a diff.**
 
@@ -54,14 +55,14 @@ The result: **every proposed change comes with a validation report, not just a d
 | **No structured review** | No systematic check for security, performance, or maintainability |
 | **Trust without verification** | "The AI said it's correct" is not a validation strategy |
 
-### The MergeGuard Approach
+### The PatchGuard AI Approach
 
 ```
 Traditional:    Issue → AI generates code → Hope it works → Ship it
 
-MergeGuard:     Issue → Plan → Multiple Solutions → Auto-Test → 
+PatchGuard AI:  Issue → Scan Repo → Plan → Multiple Solutions → Auto-Test & Real Execution → 
                 Security Review → Performance Review → Risk Score → 
-                Validation Report → Recommended Pull Request
+                Validation Report → Recommended Pull Request & Git Push
 ```
 
 ---
@@ -70,7 +71,8 @@ MergeGuard:     Issue → Plan → Multiple Solutions → Auto-Test →
 
 ```mermaid
 graph TD
-    A[📋 Software Change Issue] --> B[🧠 Planner Agent]
+    A[📋 Software Change Issue] --> XS[🔍 Repository Scanner Agent]
+    XS --> B[🧠 Planner Agent]
     B --> C[🔧 Solver Agent α]
     B --> D[🔧 Solver Agent β]
     B --> E[🔧 Solver Agent γ]
@@ -79,7 +81,7 @@ graph TD
     D --> F
     E --> F
     
-    F --> G[✅ Automated Validation]
+    F --> G[✅ Automated Validation Runner]
     G --> H[🔍 Review Agent]
     
     H --> I[🔒 Security Analysis]
@@ -93,9 +95,10 @@ graph TD
     L --> M
     
     M --> N[📑 Validation Report]
-    N --> O[✅ Recommended Pull Request]
+    N --> O[🚀 Recommended Pull Request & Push]
     
     style A fill:#6366f1,stroke:#4f46e5,color:#fff
+    style XS fill:#4f46e5,stroke:#4338ca,color:#fff
     style B fill:#8b5cf6,stroke:#7c3aed,color:#fff
     style C fill:#a78bfa,stroke:#8b5cf6,color:#fff
     style D fill:#a78bfa,stroke:#8b5cf6,color:#fff
@@ -115,14 +118,18 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant I as Issue
+    participant X as RepositoryScannerAgent
     participant P as PlannerAgent
     participant S as SolverAgents (x3)
     participant T as TestGenAgent
+    participant V as ValidationAgent
     participant R as ReviewAgent
-    participant K as RiskScorer
-    participant V as Validation Report
+    participant K as RiskScoringAgent
+    participant Rep as ReportAgent
+    participant G as GitHub PR
 
-    I->>P: Analyze issue
+    I->>X: Scan repository env & structure
+    X->>P: Profile context (lang, fw, structure)
     P->>P: Root cause analysis
     P->>P: Decompose into tasks
     P->>S: Implementation strategy
@@ -135,8 +142,8 @@ sequenceDiagram
     
     S->>T: Candidate solutions
     T->>T: Auto-generate test cases
-    T->>T: Run tests on each candidate
-    T->>R: Test results
+    T->>V: Run test cases & venv test runner
+    V->>R: Test execution results
     
     R->>R: Security analysis
     R->>R: Performance analysis
@@ -146,10 +153,11 @@ sequenceDiagram
     
     K->>K: Compute confidence score
     K->>K: Compute risk score
-    K->>V: Risk assessment
+    K->>Rep: Risk assessment
     
-    V->>V: Generate report
-    V-->>I: Recommended solution + merge decision
+    Rep->>Rep: Generate markdown & summary
+    Rep-->>I: Recommended solution + merge decision
+    Rep->>G: Push branch & create Pull Request
 ```
 
 ---
@@ -157,33 +165,23 @@ sequenceDiagram
 ## ✨ Features
 
 ### Multi-Agent Pipeline
-- **PlannerAgent** — Analyzes issues, identifies root causes, creates implementation strategies
-- **SolverAgent** (x3) — Generates diverse candidate solutions independently
-- **TestGenAgent** — Auto-generates and executes test cases per candidate
-- **ReviewAgent** — Multi-dimensional code review (security, performance, maintainability, correctness)
-- **RiskScorer** — Confidence and risk scoring with merge recommendations
+- **RepositoryScannerAgent** — Automatically profiles repository metadata, structures, configs, framework and language.
+- **PlannerAgent** — Analyzes issues, identifies root causes, creates implementation strategies.
+- **SolverAgent** (x3) — Generates diverse candidate solutions independently.
+- **TestGenAgent** — Auto-generates test cases per candidate.
+- **ValidationAgent** — Runs actual unit/pytest/npm suites in the workspace, with graceful demo simulation fallback.
+- **ReviewAgent** — Multi-dimensional code review (security, performance, maintainability, correctness).
+- **RiskScoringAgent** — Confidence and risk scoring with merge recommendations.
+- **ReportAgent** — Formats validation timeline and details into Markdown.
 
 ### Validation Dashboard
-- **Pipeline Execution** — Run the full multi-agent pipeline with one click
-- **Validation Reports** — Detailed markdown reports with scores and findings
-- **Agent Timeline** — Step-by-step execution log with timing data
-- **Architecture View** — Visual representation of the agent pipeline
-- **Manual Playground** — Review code manually and see grading results
-- **Model Leaderboard** — Benchmark results across AI models
-
-### Validation Dimensions
-| Dimension | Checks |
-|-----------|--------|
-| 🔒 **Security** | SQL injection, credential exposure, PCI compliance, auth bypasses |
-| ⚡ **Performance** | O(n) regressions, algorithmic complexity, memory leaks |
-| 🔧 **Maintainability** | PEP 8 compliance, variable shadowing, code clarity |
-| ✅ **Correctness** | Test pass rate, functional correctness, edge cases |
-
-### Risk Scoring
-- **Confidence Score** — How confident the system is in the recommendation
-- **Risk Score** — Aggregate risk level based on findings
-- **Risk Level** — LOW / MEDIUM / HIGH / CRITICAL classification
-- **Merge Recommendation** — APPROVE, REVIEW, BLOCK, or DO NOT MERGE
+- **GitHub Connection** — Input Repository URL and PAT to dynamically load issues and commit branches.
+- **Repository Scan Results** — Inspect language, framework, configs, and layout info before execution.
+- **Pipeline Execution** — Run the full multi-agent pipeline with one click.
+- **Validation Reports** — Detailed markdown reports with scores and findings.
+- **Agent Timeline** — Step-by-step execution log with timing data.
+- **Pull Request Preview** — Review drafted title, body, and files to push. Directly create Pull Requests.
+- **Model Leaderboard** — Benchmark results across AI models.
 
 ---
 
@@ -242,62 +240,9 @@ python benchmark.py --model Qwen/Qwen2.5-7B-Instruct
 ### Docker
 
 ```bash
-docker build -t mergeguard .
-docker run -p 7860:7860 mergeguard
+docker build -t patchguard .
+docker run -p 7860:7860 patchguard
 ```
-
----
-
-## 📸 Demo
-
-### Pipeline Execution
-> Run the full multi-agent pipeline against any of 19 issues. Watch agents plan, solve, test, review, and score in real time.
-
-### Validation Report
-> Every pipeline run produces a detailed validation report with risk assessment, test results, review findings, and a merge recommendation.
-
-### Agent Timeline
-> Step-by-step execution log showing each agent's actions, timing, and outputs.
-
----
-
-## 🗺️ Future Roadmap
-
-- [ ] **LLM-powered agents** — Connect Planner, Solver, and Reviewer to real LLMs
-- [ ] **GitHub integration** — Auto-create validated PRs from pipeline output
-- [ ] **Custom issue input** — Paste any GitHub issue URL for analysis
-- [ ] **Multi-language support** — Extend beyond Python to JS, Go, Rust
-- [ ] **CI/CD integration** — Run MergeGuard as a GitHub Action
-- [ ] **Team dashboard** — Multi-user validation tracking
-- [ ] **Fine-tuned review models** — Domain-specific security and performance reviewers
-- [ ] **Historical learning** — Learn from past validation results to improve accuracy
-
----
-
-## 🏆 Hackathon Pitch
-
-### The Problem
-AI coding assistants generate code without validating it. Developers waste hours reviewing AI-generated changes that contain bugs, security vulnerabilities, and performance regressions.
-
-### The Solution
-**MergeGuard** — an autonomous validation platform that runs a structured multi-agent pipeline before any code reaches a pull request. Every change gets:
-- **3 independent candidate solutions** from diverse solver agents
-- **Auto-generated test cases** run against each candidate
-- **4-dimensional code review** (security, performance, maintainability, correctness)
-- **Risk scoring** with confidence levels and merge recommendations
-- **A validation report** — not just a diff
-
-### Why It Matters
-- Reduces code review burden by 60%+
-- Catches security vulnerabilities before they reach production
-- Provides structured, repeatable validation for AI-generated code
-- Turns "trust the AI" into "verify then trust"
-
-### Technical Differentiation
-- **Multi-agent** — Not one model, but a pipeline of specialized agents
-- **Test-driven** — Every candidate is tested, not just generated
-- **Risk-scored** — Quantified confidence and risk, not just a pass/fail
-- **OpenEnv-compatible** — Pluggable into existing RL benchmarking infrastructure
 
 ---
 
@@ -311,6 +256,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 **Built for the Meta & Scaler OpenEnv Hackathon**
 
-*MergeGuard — because AI-generated code deserves validation, not just generation.*
+*PatchGuard AI — because AI-generated code deserves validation, not just generation.*
 
 </div>
