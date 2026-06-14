@@ -165,7 +165,11 @@ class PatchGuardPipeline:
             _event("ReviewAgent", f"Reviewing {sol.solver_name}", "running")
             t0 = time.time()
             sol_tests = [r for r in results if r.solution_id == sol.solution_id]
-            review = self.reviewer.review(sol, task, sol_tests)
+            review = self.reviewer.review(
+                sol, task, sol_tests,
+                clone_dir=clone_dir,
+                affected_files=task.get("files_changed", []),
+            )
             d = int((time.time() - t0) * 1000)
             reviews.append(review)
             _event("ReviewAgent", f"Review complete: {review.overall_score:.0%}", "completed", d)

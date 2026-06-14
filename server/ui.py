@@ -631,7 +631,23 @@ Run your own model: `HF_TOKEN=... python benchmark.py --model <model_id>`
                 )
                 
                 if pr_result.success:
-                    return f"🟢 Pull Request #{pr_result.pr_number} created successfully!\nURL: {pr_result.pr_url}"
+                    status_lines = [
+                        f"🟢 Pull Request #{pr_result.pr_number} created successfully!",
+                        f"URL: {pr_result.pr_url}",
+                    ]
+                    # Poll CI/CD status on pushed commit
+                    commit_sha = client.get_commit_sha(branch_name)
+                    if commit_sha:
+                        status_lines.append(f"\n⏳ Checking CI status for commit {commit_sha[:8]}...")
+                        ci_result = client.poll_ci_status(commit_sha, max_wait=30)
+                        ci_status = ci_result.get("status", "unknown")
+                        ci_conclusion = ci_result.get("conclusion", "unknown")
+                        ci_icon = {"completed": "✅", "timeout": "⏰", "skipped": "⚪"}.get(ci_status, "⚪")
+                        status_lines.append(f"{ci_icon} CI Status: {ci_status} — {ci_conclusion}")
+                        for check in ci_result.get("checks", []):
+                            check_icon = "✅" if check.get("conclusion") == "success" else "❌"
+                            status_lines.append(f"  {check_icon} {check.get('name', 'Unknown')}: {check.get('conclusion', 'N/A')}")
+                    return "\n".join(status_lines)
                 else:
                     return f"🔴 PR Creation failed: {pr_result.error}"
             except Exception as e:

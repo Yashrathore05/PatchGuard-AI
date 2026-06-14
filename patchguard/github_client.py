@@ -443,6 +443,75 @@ class GitHubClient:
                 error=str(e),
             )
 
+    # ── CI/CD Status Checking ─────────────────────────────────────────────
+
+    def get_commit_sha(self, branch: str) -> str:
+        """Get the latest commit SHA for a branch from the local clone."""
+        if self.is_demo or not self.clone_dir:
+            return ""
+
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=self.clone_dir,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    def get_check_runs(self, commit_sha: str) -> list[dict]:
+        """
+        Fetch CI check runs for a specific commit SHA from GitHub Checks API.
+        Returns a list of check run dicts, or empty list on failure/demo mode.
+        """
+        if self.is_demo or not self.token or not commit_sha:
+            return []
+
+        try:
+            data = self._api_request(
+                f"/repos/{self.owner}/{self.repo_name}/commits/{commit_sha}/check-runs",
+                method="GET",
+            )
+            return data.get("check_runs", [])
+        except Exception:
+            return []
+
+    def poll_ci_status(self, commit_sha: str, max_wait: int = 60) -> dict:
+        """
+        Poll GitHub Actions check run status for a commit.
+        Waits up to max_wait seconds for all checks to complete.
+
+        Returns:
+            dict with keys: status, conclusion, checks[]
+        """
+        if self.is_demo or not self.token or not commit_sha:
+            return {"status": "skipped", "conclusion": "demo_mode", "checks": []}
+
+        import time as _time
+        deadline = _time.time() + max_wait
+        while _time.time() < deadline:
+            checks = self.get_check_runs(commit_sha)
+            if not checks:
+                _time.sleep(10)
+                continue
+
+            all_completed = all(c.get("status") == "completed" for c in checks)
+            if all_completed:
+                conclusions = [c.get("conclusion", "unknown") for c in checks]
+                overall = "success" if all(c == "success" for c in conclusions) else "failure"
+                return {
+                    "status": "completed",
+                    "conclusion": overall,
+                    "checks": [
+                        {"name": c.get("name", ""), "conclusion": c.get("conclusion", "unknown")}
+                        for c in checks
+                    ],
+                }
+
+            _time.sleep(10)
+
+        return {"status": "timeout", "conclusion": "unknown", "checks": []}
+
     # ── Status ────────────────────────────────────────────────────────────
 
     @property

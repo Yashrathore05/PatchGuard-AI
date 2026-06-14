@@ -2,6 +2,7 @@
 patchguard/agents.py — Multi-Agent System for PatchGuard AI Validation Platform
 """
 
+import ast
 import json
 import time
 import sys
@@ -930,7 +931,8 @@ class ReviewAgent(PatchGuardAgent):
     def __init__(self):
         super().__init__("ReviewAgent")
         
-    def review(self, solution: CandidateSolution, task: dict, test_results: list[TestResult]) -> ReviewResult:
+    def review(self, solution: CandidateSolution, task: dict, test_results: list[TestResult],
+               clone_dir: str = "", affected_files: list[str] | None = None) -> ReviewResult:
         self.logs = []
         self.log(f"ReviewAgent starting multi-dimensional analysis on {solution.solver_name}")
         
@@ -1002,19 +1004,25 @@ Your response must be in JSON format with these exact keys:
                     overall_score=float(rev_json.get("overall_score", 0.8))
                 )
                 self.log(f"Review complete via LLM. Overall score: {result.overall_score:.0%}, Findings: {len(findings)}")
+                # Supplement LLM review with real static analysis findings
+                static_findings = self._run_static_analysis(clone_dir, affected_files or task.get("files_changed", []))
+                if static_findings:
+                    result.findings.extend(static_findings)
+                    self.log(f"Added {len(static_findings)} findings from static analysis tools")
                 return result
             except Exception as e:
                 self.log(f"Error parsing LLM review: {e}, falling back to heuristics", "warning")
                 
-        return self._fallback_review(solution, task, test_results)
+        return self._fallback_review(solution, task, test_results, clone_dir, affected_files)
         
-    def _fallback_review(self, solution: CandidateSolution, task: dict, test_results: list[TestResult]) -> ReviewResult:
+    def _fallback_review(self, solution: CandidateSolution, task: dict, test_results: list[TestResult],
+                         clone_dir: str = "", affected_files: list[str] | None = None) -> ReviewResult:
         self.log("Running heuristic code review fallback")
         findings = []
         diff = task.get("code_diff", "")
         dl = diff.lower()
         
-        # Security
+        # Security — heuristic checks
         sec = 0.9
         if "sql" in dl and ("f\"" in diff or "f'" in diff or "{" in diff):
             sec -= 0.4
@@ -1032,9 +1040,20 @@ Your response must be in JSON format with these exact keys:
             sec -= 0.2
             findings.append(ReviewFinding("security", "medium", "Silent Exception",
                 "Bare except with pass swallows errors", "", "Catch specific exceptions"))
+        
+        # Security — real static analysis (bandit)
+        static_findings = self._run_static_analysis(clone_dir, affected_files or task.get("files_changed", []))
+        for sf in static_findings:
+            findings.append(sf)
+            if sf.severity == "critical":
+                sec -= 0.3
+            elif sf.severity == "high":
+                sec -= 0.2
+            elif sf.severity == "medium":
+                sec -= 0.1
         sec = max(0.0, round(sec, 2))
         
-        # Performance
+        # Performance — heuristic checks
         perf = 0.9
         if "range(len" in diff:
             perf -= 0.15
@@ -1048,6 +1067,11 @@ Your response must be in JSON format with these exact keys:
             perf -= 0.2
             findings.append(ReviewFinding("performance", "medium", "Mutable Default",
                 "Mutable default causes memory growth", "", "Use None default"))
+        
+        # Performance — real AST complexity analysis
+        complexity_penalty, complexity_findings = self._compute_ast_complexity(solution.patch)
+        perf -= complexity_penalty
+        findings.extend(complexity_findings)
         perf = max(0.0, round(perf, 2))
         
         # Maintainability
@@ -1068,6 +1092,122 @@ Your response must be in JSON format with these exact keys:
         
         overall = round((sec + perf + maint + correctness) / 4, 2)
         return ReviewResult(solution.solution_id, findings, sec, perf, maint, correctness, overall)
+
+    # ── Real Static Analysis Integration ──────────────────────────────────
+
+    def _run_static_analysis(self, clone_dir: str, affected_files: list[str]) -> list[ReviewFinding]:
+        """
+        Run real static analysis tools (bandit for Python) on modified files.
+        Returns structured findings. Gracefully degrades if tools are not installed.
+        """
+        findings = []
+        if not clone_dir or not os.path.isdir(clone_dir):
+            return findings
+
+        python_files = [f for f in (affected_files or []) if f.endswith(".py")]
+        if not python_files:
+            return findings
+
+        # Resolve full paths and filter to files that exist on disk
+        target_paths = []
+        for f in python_files:
+            fp = os.path.join(clone_dir, f)
+            if os.path.exists(fp):
+                target_paths.append(fp)
+        if not target_paths:
+            return findings
+
+        # Attempt to run bandit (Python SAST)
+        try:
+            result = subprocess.run(
+                ["bandit", "-f", "json", "-q", "--exit-zero"] + target_paths,
+                capture_output=True, text=True, timeout=30, cwd=clone_dir,
+            )
+            if result.stdout:
+                bandit_output = json.loads(result.stdout)
+                severity_map = {"HIGH": "critical", "MEDIUM": "high", "LOW": "medium"}
+                for issue in bandit_output.get("results", []):
+                    sev_raw = issue.get("issue_severity", "LOW").upper()
+                    findings.append(ReviewFinding(
+                        category="security",
+                        severity=severity_map.get(sev_raw, "low"),
+                        title=f"[Bandit {issue.get('test_id', '')}] {issue.get('test_name', '')}",
+                        description=issue.get("issue_text", ""),
+                        line_reference=f"{os.path.basename(issue.get('filename', ''))}:{issue.get('line_number', '')}",
+                        recommendation=f"Confidence: {issue.get('issue_confidence', 'UNDEFINED')}. See CWE-{issue.get('issue_cwe', {}).get('id', 'N/A')}",
+                    ))
+                if findings:
+                    self.log(f"Bandit found {len(findings)} security issue(s) in {len(target_paths)} file(s)")
+                else:
+                    self.log("Bandit scan clean — no findings")
+        except FileNotFoundError:
+            self.log("bandit not installed — skipping SAST analysis")
+        except subprocess.TimeoutExpired:
+            self.log("bandit timed out — skipping SAST analysis")
+        except Exception as e:
+            self.log(f"Static analysis error: {e}")
+
+        return findings
+
+    def _compute_ast_complexity(self, patch: str) -> tuple[float, list[ReviewFinding]]:
+        """
+        Perform real AST-based complexity analysis on the added code in a patch.
+        Returns (performance_penalty, findings).
+        """
+        findings = []
+        penalty = 0.0
+
+        # Extract only the added lines from the unified diff
+        added_lines = []
+        for line in patch.split("\n"):
+            if line.startswith("+") and not line.startswith("+++"):
+                added_lines.append(line[1:])
+
+        code_block = "\n".join(added_lines)
+        if not code_block.strip():
+            return penalty, findings
+
+        try:
+            tree = ast.parse(code_block)
+        except SyntaxError:
+            # Not valid standalone Python — skip
+            return penalty, findings
+
+        # Nesting depth analysis
+        max_depth = self._get_max_nesting_depth(tree)
+        if max_depth > 4:
+            penalty += 0.1
+            findings.append(ReviewFinding(
+                "performance", "medium", "Deep Nesting Detected",
+                f"Maximum nesting depth of {max_depth} in added code. Deep nesting reduces readability and maintainability.",
+                "", "Refactor to reduce nesting below 4 levels (extract helper functions, use early returns)",
+            ))
+            self.log(f"AST analysis: nesting depth {max_depth} exceeds threshold")
+
+        # Function length analysis
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                func_lines = (node.end_lineno - node.lineno + 1) if hasattr(node, "end_lineno") and node.end_lineno else 0
+                if func_lines > 50:
+                    penalty += 0.05
+                    findings.append(ReviewFinding(
+                        "maintainability", "low", f"Long Function: {node.name}",
+                        f"Function '{node.name}' has {func_lines} lines. Long functions are harder to test and maintain.",
+                        f"line {node.lineno}", "Split into smaller, focused functions (< 50 lines each)",
+                    ))
+
+        return min(penalty, 0.3), findings
+
+    def _get_max_nesting_depth(self, node, current_depth: int = 0) -> int:
+        """Calculate maximum control-flow nesting depth in an AST."""
+        max_d = current_depth
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.If, ast.For, ast.While, ast.With, ast.Try, ast.ExceptHandler)):
+                child_depth = self._get_max_nesting_depth(child, current_depth + 1)
+            else:
+                child_depth = self._get_max_nesting_depth(child, current_depth)
+            max_d = max(max_d, child_depth)
+        return max_d
 
 
 class RiskScoringAgent(PatchGuardAgent):
